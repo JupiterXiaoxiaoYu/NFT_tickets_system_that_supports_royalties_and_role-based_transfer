@@ -24,9 +24,11 @@ Low cost: The issuer does not need to integrate with multiple third-party ticket
 Transparency: All transaction data is stored on the blockchain, and the data is no longer proprietary to a third party.
 
 ## Implementation in this project
-This implementation is based on https://github.com/algorandlabs/smart-asa, I create new contract methods to allow transfer with royalties. Specifically, the customized loyalty rate is 0.2, which means sending 10 tickets will actually send only 8 tickets and the other 2 tickets are sent back to the smart contract. This could be customized, either the rate or the asset of royalties. For example, you can use Algo as the royalty charing asset, and you can set the royalty rate per ticket, for instance, 1 Algo per ticket. 
+This implementation is based on https://github.com/algorandlabs/smart-asa, I create new contract methods to allow transfer with royalties. Specifically, the customized loyalty rate is 0.1, which means sending 10 tickets will actually send only 9 tickets and the other 1 ticket is sent back to the smart contract. This could be customized, either the rate or the asset of royalties. For example, you can use Algo as the royalty charing asset, and you can set the royalty rate per ticket, for instance, 1 Algo per ticket. 
 
-The method of royalty transfer is shown below: 
+The method of royalty transfer in is shown below: 
+
+In smart_asa_asc:
 ```
 def smart_asa_transfer_inner_txn_with_royaties(
     smart_asa_id: Expr,
@@ -61,7 +63,93 @@ def smart_asa_transfer_inner_txn_with_royaties(
         InnerTxnBuilder.Submit(),
     )
 ```
+You could customize the asset and rate of royalty here in the smart contract. 
+
+For calling the method (in smart_asa_cli): 
+```
+def asset_send_with_royaties(
+    args: dict,
+    contract: Contract,
+    smart_asa_app: AppAccount,
+) -> None:
+    if args["--reserve"]:
+        caller = Sandbox.from_public_key(args["--reserve"])
+        if (
+            args["<to>"] == args["--reserve"]
+            and args["<from>"] == smart_asa_app.address
+        ):
+            action = "Minting"
+        elif (
+            args["<to>"] == smart_asa_app.address
+            and args["<from>"] == args["--reserve"]
+        ):
+            action = "Burning"
+        else:
+            action = "Sending"
+    elif args["--clawback"]:
+        caller = Sandbox.from_public_key(args["--clawback"])
+        action = "Clawbacking"
+    else:
+        caller = Sandbox.from_public_key(args["<from>"])
+        action = "Sending"
+
+    print(
+        f"\n --- {action} {args['<amount>']} units of Smart ASA "
+        f"{args['<asset-id>']} from {args['<from>']} to "
+        f"{args['<to>']}..."
+    )
+    smart_asa_transfer_with_royaties_ten_percent(
+        smart_asa_contract=contract,
+        smart_asa_app=smart_asa_app,
+        xfer_asset=args["<asset-id>"],
+        asset_amount=args["<amount>"],
+        caller=caller,
+        asset_receiver=args["<to>"],
+        asset_sender=args["<from>"],
+    )
+    return print(f" --- Confirmed Royalties transfer!\n")
+```
+This method will then call the `smart_asa_transfer_with_royaties_ten_percent` method in smart_asa_client:
+
+```
+def smart_asa_transfer_with_royaties_ten_percent(
+    smart_asa_contract: Contract,
+    smart_asa_app: AppAccount,
+    xfer_asset: int,
+    asset_amount: int,
+    caller: Account,
+    asset_receiver: Account,
+    asset_sender: Optional[Union[str, Account]] = None,
+    save_abi_call: Optional[str] = None,
+) -> None:
+
+    params = get_params(caller.algod_client)
+    abi_call_fee = params.fee * 10
+
+    caller.abi_call(
+        smart_asa_contract.get_method_by_name("asset_transfer_with_royaties_ten_percent"),
+        xfer_asset,
+        asset_amount,
+        caller if asset_sender is None else asset_sender,
+        asset_receiver,
+        app=smart_asa_app,
+        fee=abi_call_fee,
+        save_abi_call=save_abi_call,
+    )
+```
+
+Demo:
+1. set up enviroment for sandbox
+2. create the asset with ARC-0020 standard
+3. opt-in three accounts/addresses(one of the account has to be the creator of the asset) to the created asset
+4. mint assets using the creator's account/address
+5. the creator transfer asset to one of the remaining accounts using normal send method (no royalty is charged, which corresponds to primary market sales)
+6. the receiver of the assets then transfer 10 of the asset to the other account who does not have the asset, and 1 of the asset will be charged and sent back to the smart contract (which corresponds to second market sales with royalty)
+
 
 
 
 ## Reference
+- <a href="https://github.com/algorandfoundation/ARCs/blob/main/ARCs/arc-0020.md ">[arc-0020]</a>
+- <a href="https://github.com/algorandlabs/smart-asa ">[Smart-ASA]</a>
+
