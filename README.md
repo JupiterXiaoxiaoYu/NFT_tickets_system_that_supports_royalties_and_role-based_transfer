@@ -175,9 +175,9 @@ The other related parts or methods are pretty similar to those of transferring a
 
 ### 1. Setup the enviroment (WSL in my device)
 #### Command
-`cd sandbox`
-`./sandbox up`
-`pipenv install` 
+1. `cd sandbox`
+2. `./sandbox up`
+3. `pipenv install` 
 #### Demo
 ![1sandbox](./pic/1sandbox.png)
 #### Explanation
