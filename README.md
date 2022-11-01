@@ -24,13 +24,13 @@ Low cost: The issuer does not need to integrate with multiple third-party ticket
 Transparency: All transaction data is stored on the blockchain, and the data is no longer proprietary to a third party.
 
 ## Implementation in this project
-This implementation is based on https://github.com/algorandlabs/smart-asa, I create new contract methods to allow transfer with royalties. Specifically, the customized loyalty rate is 0.1, which means sending 10 tickets will actually send only 9 tickets and the other 1 ticket is sent back to the smart contract. This could be customized, either the rate or the asset of royalties. For example, you can use Algo as the royalty charing asset, and you can set the royalty rate per ticket, for instance, 1 Algo per ticket. 
+This implementation is based on https://github.com/algorandlabs/smart-asa, I create new contract methods to allow transfer with royalties and role-checking. Specifically, the customized loyalty rate is 0.1, which means sending 10 tickets will actually send only 9 tickets and the other 1 ticket is sent back to the smart contract. This could be customized, either the rate or the asset of royalties. For example, you can use Algo as the royalty charing asset, and you can set the royalty rate per ticket, for instance, 1 Algo per ticket. What's more, a transfer without royalties can only be called by the asset manager/issuer/creator.
 
 The method of royalty transfer in is shown below: 
 
 In smart_asa_asc:
 ```
-def smart_asa_transfer_inner_txn_with_royaties(
+def smart_asa_transfer_inner_txn_with_royalties(
     smart_asa_id: Expr,
     asset_amount: Expr,
     asset_sender: Expr,
@@ -67,7 +67,7 @@ You could customize the asset and rate of royalty here in the smart contract.
 
 For calling the method (in smart_asa_cli): 
 ```
-def asset_send_with_royaties(
+def asset_send_with_royalties(
     args: dict,
     contract: Contract,
     smart_asa_app: AppAccount,
@@ -98,7 +98,7 @@ def asset_send_with_royaties(
         f"{args['<asset-id>']} from {args['<from>']} to "
         f"{args['<to>']}..."
     )
-    smart_asa_transfer_with_royaties_ten_percent(
+    smart_asa_transfer_with_royalties_ten_percent(
         smart_asa_contract=contract,
         smart_asa_app=smart_asa_app,
         xfer_asset=args["<asset-id>"],
@@ -109,10 +109,10 @@ def asset_send_with_royaties(
     )
     return print(f" --- Confirmed Royalties transfer!\n")
 ```
-This method will then call the `smart_asa_transfer_with_royaties_ten_percent` method in smart_asa_client:
+This method will then call the `smart_asa_transfer_with_royalties_ten_percent` method in smart_asa_client:
 
 ```
-def smart_asa_transfer_with_royaties_ten_percent(
+def smart_asa_transfer_with_royalties_ten_percent(
     smart_asa_contract: Contract,
     smart_asa_app: AppAccount,
     xfer_asset: int,
@@ -127,7 +127,7 @@ def smart_asa_transfer_with_royaties_ten_percent(
     abi_call_fee = params.fee * 10
 
     caller.abi_call(
-        smart_asa_contract.get_method_by_name("asset_transfer_with_royaties_ten_percent"),
+        smart_asa_contract.get_method_by_name("asset_transfer_with_royalties_ten_percent"),
         xfer_asset,
         asset_amount,
         caller if asset_sender is None else asset_sender,
@@ -138,18 +138,121 @@ def smart_asa_transfer_with_royaties_ten_percent(
     )
 ```
 
-Demo:
-1. set up enviroment for sandbox
-2. create the asset with ARC-0020 standard
-3. opt-in three accounts/addresses(one of the account has to be the creator of the asset) to the created asset
-4. mint assets using the creator's account/address
-5. the creator transfer asset to one of the remaining accounts using normal send method (no royalty is charged, which corresponds to primary market sales)
-6. the receiver of the assets then transfer 10 of the asset to the other account who does not have the asset, and 1 of the asset will be charged and sent back to the smart contract (which corresponds to second market sales with royalty)
+The method of transfer with role-checking (no royalties) in is shown below (related part):
+```
+    ...
+    is_control_roles = Or(
+        asset_sender.address() == App.globalGet(GlobalState.reserve_addr),
+        asset_sender.address() == Global.current_application_address(),
+    )
+    ...
+    =============================================
+    ...
+    If(is_not_clawback)
+        .Then(
+            # Asset Regular Transfer Preconditions
+            Assert(
+                Not(asset_frozen),
+                Not(asset_sender_frozen),
+                Not(asset_receiver_frozen),
+                is_current_smart_asa_id,
+                is_control_roles
+            ),
+        )
+    ...
+```
 
+The other related parts or methods are pretty similar to those of transferring assets with royalties, but without the inner transaction for royalties in the construction method of the inner transaction method for asset transfer
 
+## Demo: (see test.txt for commands for CLI)
+1. Set up the environment for the sandbox
+2. Create the asset with ARC-0020 standard
+3. Opt-in three accounts/addresses(one of the account has to be the creator of the asset) to the created asset
+4. Show the information of the smart ASA
+4. Mint assets using the creator's account/address
+5. The creator transfer asset to one of the remaining accounts using send method without royalties (no royalty is charged but identity checking is required, which means only the creator could transfer the asset without royalties, which corresponds to primary market sales)
+6. The receiver of the assets then transfers some of the assets to the other account that does not have the asset, and 10% of the transferred assets will be sent back to the smart contract as a charge(which corresponds to secondary market sales with royalty)
+
+### 1. Setup the enviroment (WSL in my device)
+#### Command
+`cd sandbox`
+`./sandbox up`
+`pipenv install` 
+#### Demo
+![1sandbox](./pic/1sandbox.png)
+#### Explanation
+In order to run the code in the local environment, please follow the instruction of Algorand Sandbox to set up the sandbox environment, you may choose the dev private network as the specific configuration as it is extremely useful for fast e2e testing of an application.
+Sandbox: https://github.com/algorand/sandbox
+
+In addition, you need to install the Smart ASA CLI by `pipenv install`. The CLI, as-is, is intended for testing purposes and can only be used within an Algorand Sandbox environment. Please refer to <a href="https://github.com/algorandlabs/smart-asa ">Smart-ASA</a>.
+
+### 2. Create the asset with the account of ticket issuer
+#### Command
+`python smart_asa_cli.py create ISSUER_ADDRESS MAXIMUM_ISSUE --name YOUR_NFT_NAME --unit-name YOUR_UNIT_NAME`
+#### Demo
+![2create](./pic/2create.png)
+#### Explanation
+As you can see, there are currently 3 accounts and the three pairs of curly braces contain the asset balance corresponding to each account. In this section, I create a smart ASA named teNFT(also, asset-72) and fund the contract with 1 algo.
+
+### 3. Opt-in the asset
+#### Command
+`python smart_asa_cli.py optin ASSET_ID ADDRESS`
+#### Demo
+![3optin](./pic/3optin.png)
+#### Explanation
+I opted all the accounts into the asset-72, to be able to receive and send it. You can also see there is one pair of curly brace which is noted with a red grid, that is the balance of the smart contract corresponds to the smart ASA. Currently, the amount of the asset-72 in this contract address is the max supply.
+
+### 4. Get contract address
+#### Command
+`python smart_asa_cli.py info ASSET_ID `
+#### Demo
+![4contractinfo](./pic/4contractinfo.png)
+#### Explanation
+To mint the asset, we need to get the address of the smart contract, so here I just call the info method to get it.
+
+### 5. Mint some assets
+#### Command
+`python smart_asa_cli.py send 72 CONTRACT_ADDRESS ADDRESS 80 --reserve ISSUER_ADDRESS`
+#### Demo
+![5mint](./pic/5mint.png)
+#### Explanation
+In this section, I mint 80 asset-72, using the issuer's address as the receiver and reserve address. In real life, this is the process of issuing tickets.
+
+### 6. Send Asset (Role-based without royalties) - Success
+#### Command
+`python smart_asa_cli.py send 72 ISSUER_ADDRESS ADDRESS ASSET_AMOUNT`
+#### Demo
+![6send](./pic/6send.png)
+#### Explanation
+I send 60 asset-72 to one of the other two addresses (the receiver represents people who need tickets or who wanna sell tickets), the transfer is role-based without any royalties, it asserts if the transaction sender and the asset sender are the smart contract address or the issuer address if it is then the transaction could be submitted. This send method could be combined with an algo transaction to implement the ticket buying, thus, the issuer could customize the price of the ticket as well as a discount if there is any. 
+
+### 7. Send Asset (Role-based without royalties) - Fail
+#### Command
+`python smart_asa_cli.py send 72 ADDRESS ADDRESS ASSET_AMOUNT`
+#### Demo
+![7sendfailed](./pic/7sendfailed.png)
+#### Explanation
+This section aims to provide a counterpart of the previous section: If a non-issuer address tries to send assets with the role-based send method, the transaction will fail.
+
+### 8. Send Asset with royalties - Success
+#### Command
+`python smart_asa_cli.py sendwithroyalties 72 ADDRESS ADDRESS ASSET_AMOUNT`
+#### Demo
+![8sendwithroyalties](./pic/8sendwithroyalties.png)
+#### Explanation
+This section represents the secondary market of tickets in the real life, people could sell and transfer tickets to others and they are charged because of royalties. In the example that is illustrated by the screenshot, in transaction 1, the address 6EBU.. sends 10 asset-72 to address 6WZN.. with 10% royalties. Then in transaction 2, we could see the balances info in front of the transaction, which indicates that only 9 asset-72 are sent to address 6WZN.. and the other 1 is sent back to the contract address.
+
+### 9. Review Smart ASA info
+#### Command
+`python smart_asa_cli.py info ASSET_ID `
+#### Demo
+![9contractinfo](./pic/9contractinfo.png)
+#### Explanation
+Let's see the balances of all addresses and the smart ASA info again, after two transfers with royalties, address 6WZN.. now have 18 asset-72. As I have minted 80 asset-72 using the issuer's account and 2 of them are sent back to the contract address as royalties, now the contract has totally issued 78 asset-72.
 
 
 ## Reference
 - <a href="https://github.com/algorandfoundation/ARCs/blob/main/ARCs/arc-0020.md ">[arc-0020]</a>
 - <a href="https://github.com/algorandlabs/smart-asa ">[Smart-ASA]</a>
+- <a href="https://github.com/algorand/sandbox ">[Algorand-SandBox]</a>
 
